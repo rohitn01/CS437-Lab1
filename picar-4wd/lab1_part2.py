@@ -13,6 +13,7 @@ SERVO_ANGLE_STEP = 10
 MOTOR_POWER = 4
 TURN_TIME = 580
 MAX_GRID_SIZE = 50
+MAP_GRANULARITY = 6
 class PiCar():
     def __init__(self):
         self.orientation_angles = set([0, 90, 180, 270])
@@ -20,12 +21,11 @@ class PiCar():
         self.position = (0,int(MAX_GRID_SIZE/2)-1)
         self.max_angle_bound = SERVO_ANGLE_RANGE
         self.angles = np.array([i for i in range(-int(self.max_angle_bound), int(self.max_angle_bound) + SERVO_ANGLE_STEP, SERVO_ANGLE_STEP)])
-        self.scans = []
-        
-        self.current_angle = 0
-        self.scan_list = []
+
+        self.servo_angle = 0
 
         self.env_map = np.zeros((MAX_GRID_SIZE,MAX_GRID_SIZE))
+        self.env_map_inst = np.zeros((MAX_GRID_SIZE,MAX_GRID_SIZE))
 
         signal.signal(signal.SIGINT, self.handle_signal)
         
@@ -36,12 +36,8 @@ class PiCar():
     def change_angle_90(self, new_angle):
         
         if new_angle not in self.orientation_angles:
-            return
-        
-        print(new_angle, self.orientation)
-        
+            return   
         angle_change = new_angle - self.orientation
-        print(angle_change)
         if angle_change == -90 or angle_change == 270:
             self.turn_right_90()
         elif angle_change == 90 or angle_change == -270:
@@ -68,7 +64,7 @@ class PiCar():
         fc.stop()
 
     def move_distance(self, grid_dist):
-        dist_in_cm = 9 * grid_dist
+        dist_in_cm = MAP_GRANULARITY * grid_dist
 
         dist_travelled = 0
         time.sleep(0.005)
@@ -78,7 +74,7 @@ class PiCar():
             dist_travelled += .15
         fc.stop()
 
-        self.position = (self.position[0] + (dist_in_cm * np.cos(self.orientation))/9, self.position[1] + (dist_in_cm * np.sin(self.orientation)/9))
+        self.position = (self.position[0] + (dist_in_cm * np.cos(self.orientation))/MAP_GRANULARITY, self.position[1] - (dist_in_cm * np.sin(self.orientation)/MAP_GRANULARITY))
     
     def get_x(self):
         return self.position[0]
@@ -98,31 +94,35 @@ class PiCar():
                 fc.stop()
                 self.change_angle()
                 fc.backward(4)
-       
+    
+    def get_orientation(self):
+        return self.orientation
+
     def scan_step(self):
         angle_steps = self.angles.copy()
         scan_reversed = False
-        if self.current_angle == self.max_angle_bound:
+        if self.servo_angle == self.max_angle_bound:
             angle_steps = np.flip(angle_steps)
             scan_reversed = True
 
         scan_list = []
         for angle in angle_steps:
-            time.sleep(0.2)
+            time.sleep(0.05)
             dist = fc.get_distance_at(angle)
-            self.current_angle = angle
+            self.servo_angle = angle
             scan_list.append(dist)
         
 
         if scan_reversed:
             scan_list.reverse()
-        # print(self.scan_list)
         return np.array(scan_list)
 
     def map_car(self):
         print("MAPPING")
-        self.env_map = np.zeros((MAX_GRID_SIZE, MAX_GRID_SIZE))
+        self.env_map = self.env_map_inst.copy()
         self.env_map[int(self.get_y())][int(self.get_x())] = 8
+        self.env_map_inst = np.zeros((MAX_GRID_SIZE,MAX_GRID_SIZE))
+        #self.env_map[int(self.get_y())][int(self.get_x())] = 8
         cosines = np.cos(np.radians(self.angles+self.orientation))
         sines = np.sin(np.radians(self.angles+self.orientation))
         num_scans = 0
@@ -138,31 +138,37 @@ class PiCar():
                 if scan[i] < 0:
                     prev = 0
                     continue
-                row = int(self.position[1] - scan_sines[i]/9)
-                col = int(self.position[0] + scan_cosines[i]/9)
-                if self.orientation == 0:
-                    col -= 1
-                elif self.orientation == 90:
-                    row += 1
-                elif self.orientation == 180:
-                    col += 1
-                elif self.orientation == 270:
-                    row -= 1
+                row = int(self.position[1] - scan_sines[i]/MAP_GRANULARITY)
+                col = int(self.position[0] + scan_cosines[i]/MAP_GRANULARITY)
+                if self.env_map[row][col] == 8:
+                    continue
+                # Map objects 1 grid point closer to car to avoid unncessary obstructions.
+                # if self.orientation == 0:
+                #     col -= 1
+                # elif self.orientation == 90:
+                #     row += 1
+                # elif self.orientation == 180:
+                #     col += 1
+                # elif self.orientation == 270:
+                #     row -= 1
                 if row < 0 or col < 0 or col >= 50 or row >= 50:
                     prev = 0
                     continue
                 
                 self.env_map[row][col] = 1
+                self.env_map_inst[row][col] = 1
                 # create line between previous and current point
                 if prev > 0:
                     if col == prev_col:
                         for j in range(prev_row, row):
                             self.env_map[j][col] = 1
+                            self.env_map_inst[row][col] = 1
                     else:
                         slope = (row - prev_row) / (col - prev_col)
                         for j in range(min(prev_col, col), max(prev_col, col)):
                             y = int(prev_row + slope * (j - prev_col))
                             self.env_map[y][j] = 1
+                            self.env_map_inst[row][col] = 1
 
                 prevIdx = i+1
                 prev = 1

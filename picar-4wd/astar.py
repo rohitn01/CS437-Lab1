@@ -8,7 +8,7 @@ from lab1_part2 import PiCar
 NP_ROWS = 50
 NP_COLS = 50
 
-PATH_THRESHOLD = 5
+MOVE_THRESHOLD = 7
 
 
 class Vertex:
@@ -85,27 +85,37 @@ def heuristic(curr, end):
 def pathFinder(path, target, car):
     prev = None
     dy_dx = (0, 0)
+    prev_angle = car.get_orientation()
+    steps_move = 0
     if path is None:
         return None
-    for idx, curr in enumerate(path):
+    for curr in path:
+        print(curr)
         if prev == None:
             prev = curr
             continue
         move = (curr[0]-prev[0], curr[1]-prev[1])
         dy_dx = (dy_dx[0]+move[0], dy_dx[1]+move[1])
+        curr_angle = 0
         if move[0] == -1:       # left
-            car.change_angle_90(180)
-            car.move_distance(1)
+            curr_angle = 180
         elif move[0] == 1:      # right
-            car.change_angle_90(0)
-            car.move_distance(1)
+            curr_angle = 0
         elif move[1] == 1:     # down
-            car.change_angle_90(270)
-            car.move_distance(1)
+            curr_angle = 270
         elif move[1] == -1:      # up
-            car.change_angle_90(90)
-            car.move_distance(1)
+            curr_angle = 90
+
+        if curr_angle != prev_angle:
+            car.move_distance(steps_move)
+            car.change_angle_90(curr_angle)
+            steps_move = 1
+            break
+        else:
+            steps_move += 1
+        prev_angle = curr_angle
         prev = curr
+    car.move_distance(steps_move)
     return dy_dx
 
 def moveToDestination(x, y, car):
@@ -114,14 +124,20 @@ def moveToDestination(x, y, car):
     while (x,y) != car_origin:
         car.map_car()
         grid = car.get_env_map()
+        print("Received map")
+        if grid[y][x] == 1:
+            print("UNABLE TO GET TO LOCATION: PATH OBSTRUCTED")
+            car.change_angle_90(180)
+            car.change_angle_90(180)
         path = a_star(grid, car_origin, (x, y))
         print(path)
+        if path is None:
+            print("unable to reach path")
         if (x,y) not in path:
             print("unable to reach path")
             break
-        dy_dx = pathFinder(path[:5], (x, y), car)
-        car_origin = (car_origin[0]+dy_dx[0], car_origin[1]+dy_dx[1])
-        print(car_origin)
+        dy_dx = pathFinder(path[:MOVE_THRESHOLD], (x, y), car)
+        car_origin = (int(car.get_x()), int(car.get_y()))
 
 if __name__ == "__main__":
     grid = np.load("env_map_test.npy")
